@@ -6,10 +6,10 @@ const log = std.log.scoped(.rbtree);
 
 pub const RedBlackTree = struct {
     root: ?*Node = null,
-    // /// cached first node
-    // first: ?*Node = null,
-    // /// cached last node
-    // last: ?*Node = null,
+    /// cached first node
+    first: ?*Node = null,
+    /// cached last node
+    last: ?*Node = null,
     size: usize = 0,
 
     const Color = enum(u1) {
@@ -91,7 +91,6 @@ pub const RedBlackTree = struct {
     pub const Entry = struct {
         parent: ?*Node,
         this: *?*Node,
-        depth: u6 = 0,
     };
 
     /// O(log n) insert `node` into the tree using `comparator` to compare nodes,
@@ -141,6 +140,13 @@ pub const RedBlackTree = struct {
         return self.getEntry(comparator, node).this.*;
     }
 
+    fn fixChildParentPointers(
+        node: *Node,
+    ) void {
+        if (node.left) |left| left.setParent(node);
+        if (node.right) |right| right.setParent(node);
+    }
+
     /// O(1) insert, requires knowing the entry
     pub fn putEntry(
         self: *@This(),
@@ -152,8 +158,9 @@ pub const RedBlackTree = struct {
             // std.debug.print("insert simple case 0\n", .{});
             node.* = old.*;
             old.* = undefined;
-            if (node.left) |left| left.setParent(node);
-            if (node.right) |right| right.setParent(node);
+            fixChildParentPointers(node);
+            if (self.first == old) self.first = node;
+            if (self.last == old) self.last = node;
             return old;
         }
 
@@ -163,6 +170,8 @@ pub const RedBlackTree = struct {
         node.setParent(entry.parent);
         node.resetSide();
         self.size += 1;
+        if (self.first == null or (self.first == entry.parent and node.extra.side == .left)) self.first = node;
+        if (self.last == null or (self.last == entry.parent and node.extra.side == .right)) self.last = node;
         self.rebalanceAfterPut(node);
 
         return null;
@@ -174,7 +183,7 @@ pub const RedBlackTree = struct {
         /// pointer to a node pointer stored in a parent node or root
         old_entry: Entry,
     ) ?*Node {
-        defer self.verify(TestNode.cmp);
+        // defer self.verify(TestNode.cmp);
 
         if (old_entry.this.* == null) {
             // case 0 (old entry null)
@@ -186,24 +195,39 @@ pub const RedBlackTree = struct {
         var node = old_entry.this.*.?;
         var node_entry = self.entryOf(node.*);
 
+        if (node == self.first) {
+            self.first = successor(self.first.?);
+        }
+        if (node == self.last) {
+            self.last = predecessor(self.last.?);
+        }
+
         while (true) {
-            std.debug.assert(node_entry.*.? == node);
             // std.debug.print("remove simple start (node=", .{});
             // TestNode.print(node);
+            // if (node.parent()) |parent| {
+            //     std.debug.print(", parent=", .{});
+            //     TestNode.print(parent);
+            // }
             // std.debug.print(")\n", .{});
+            // self.debug(TestNode.print);
+            std.debug.assert(node_entry.*.? == node);
 
             // simple cases
 
             if (node.left != null and node.right != null) {
                 // std.debug.print("remove simple case 1\n", .{});
-                const successor_entry = leftmost(&node.right).this;
-                const successor = successor_entry.*.?;
-                std.debug.assert(successor.left == null);
-                std.debug.assert(successor != node);
-                std.mem.swap(?*Node, successor_entry, node_entry);
-                std.mem.swap(Node, successor, node);
-                node = successor;
-                node_entry = node_entry;
+                const succ = leftmost(node.right.?);
+                const succ_entry = self.entryOf(succ.*);
+                std.debug.assert(succ.left == null);
+                std.debug.assert(succ != node);
+                std.debug.assert(succ_entry != node_entry);
+
+                std.mem.swap(?*Node, succ_entry, node_entry);
+                std.mem.swap(Node, succ, node);
+                fixChildParentPointers(succ);
+                fixChildParentPointers(node);
+                node_entry = self.entryOf(node.*);
                 continue;
             }
 
@@ -519,16 +543,8 @@ pub const RedBlackTree = struct {
             };
             entry.parent = cur;
             entry.this = next;
-            entry.depth += 1;
         }
         return entry;
-    }
-
-    /// O(log n) lookup
-    pub fn firstEntry(
-        self: *@This(),
-    ) Entry {
-        return leftmost(&self.root);
     }
 
     /// get a pointer to the pointer that points to this node
@@ -540,35 +556,56 @@ pub const RedBlackTree = struct {
     }
 
     fn leftmost(
-        subtree: *?*Node,
-    ) Entry {
-        var entry: Entry = .{
-            .parent = null,
-            .this = subtree,
-        };
-        while (entry.this.*) |cur| {
-            if (cur.left == null) break;
-            entry.parent = cur;
-            entry.this = &cur.left;
-            entry.depth += 1;
-        }
-        return entry;
+        subtree: *Node,
+    ) *Node {
+        return repeat(subtree, .left);
     }
 
     fn rightmost(
-        subtree: *?*Node,
-    ) Entry {
-        var entry: Entry = .{
-            .parent = null,
-            .this = subtree,
-        };
-        while (entry.this.*) |cur| {
-            if (cur.right == null) break;
-            entry.parent = cur;
-            entry.this = &cur.right;
-            entry.depth += 1;
+        subtree: *Node,
+    ) *Node {
+        return repeat(subtree, .right);
+    }
+
+    fn repeat(
+        subtree: *Node,
+        side: Side,
+    ) *Node {
+        var cur = subtree;
+        while (cur.child(side)) |next| {
+            cur = next;
         }
-        return entry;
+        return cur;
+    }
+
+    fn predecessor(
+        node: *Node,
+    ) ?*Node {
+        return advance(node, .left);
+    }
+
+    fn successor(
+        node: *Node,
+    ) ?*Node {
+        return advance(node, .right);
+    }
+
+    fn advance(
+        node: *Node,
+        dir: Side,
+    ) ?*Node {
+        var cur = node;
+        if (cur.child(dir)) |subtree| {
+            return repeat(subtree, dir.flip());
+        }
+        // go back up as long as the current node
+        // is on the same side of the subtree
+        while (true) {
+            const is_same = cur.extra.side == dir;
+            cur = cur.parent() orelse return null;
+            if (!is_same) break;
+        }
+        return cur;
     }
 
     fn sideOf(
@@ -611,39 +648,24 @@ pub const RedBlackTree = struct {
     }
 
     pub const Iterator = struct {
-        node: ?*Node,
-        right_turn_bitfield: usize,
-        depth: u6,
+        head: ?*Node = null,
+        tail: ?*Node = null,
 
         pub fn next(
             self: *@This(),
         ) ?*Node {
-            const cur = self.node orelse return null;
+            const cur = self.head orelse return null;
+            if (self.head == self.tail) self.* = .{};
+            self.head = successor(cur);
+            return cur;
+        }
 
-            if (cur.right) |right| {
-                self.right_turn_bitfield |= @as(usize, 1) << self.depth;
-                self.depth += 1;
-
-                var successor = right;
-                while (successor.left) |left| {
-                    self.right_turn_bitfield &= ~(@as(usize, 1) << self.depth);
-                    self.depth += 1;
-                    successor = left;
-                }
-                self.node = successor;
-            } else {
-                // go back up as long as the current node
-                // is on the right side of the subtree
-                while (true) {
-                    self.depth -|= 1;
-                    const was_right_turn = (self.right_turn_bitfield & (@as(usize, 1) << self.depth)) != 0;
-                    self.right_turn_bitfield &= ~(@as(usize, 1) << self.depth);
-                    self.node = self.node.?.parent();
-
-                    if (!was_right_turn) break;
-                }
-            }
-
+        pub fn nextBack(
+            self: *@This(),
+        ) ?*Node {
+            const cur = self.tail orelse return null;
+            if (self.head == self.tail) self.* = .{};
+            self.tail = predecessor(cur);
             return cur;
         }
     };
@@ -651,11 +673,9 @@ pub const RedBlackTree = struct {
     pub fn iterator(
         self: *const @This(),
     ) Iterator {
-        const entry = @constCast(self).firstEntry();
         return .{
-            .node = entry.this.*,
-            .right_turn_bitfield = 0,
-            .depth = entry.depth,
+            .head = self.first,
+            .tail = self.last,
         };
     }
 
@@ -688,8 +708,9 @@ pub const RedBlackTree = struct {
 
         std.debug.print("{s}", .{if (node.extra.color == .red) "\x1b[31m" else "\x1b[30m"});
         print(node);
-        std.debug.print("{s}\x1b[0m\n", .{
-            if (node == self.root or (node.extra.side == .left) == is_left) "" else " !",
+        std.debug.print("{s}{s}\x1b[0m\n", .{
+            if (node == self.root or (node.extra.side == .left) == is_left) "" else " wrong side",
+            if (node == self.root or node.parent().?.child(node.extra.side) == node) "" else " wrong parent",
         });
 
         var vert =
@@ -737,14 +758,20 @@ pub const RedBlackTree = struct {
         self: *const @This(),
         comparator: *const fn (*const Node, *const Node) std.math.Order,
     ) void {
+        const root = self.root orelse {
+            std.debug.assert(self.first == null);
+            std.debug.assert(self.last == null);
+            return;
+        };
+        std.debug.assert(root.parent() == null);
+        std.debug.assert(leftmost(root) == self.first);
+        std.debug.assert(rightmost(root) == self.last);
+
         var black_height: ?usize = null;
         var node_count: usize = 0;
-        if (self.root) |root| {
-            std.debug.assert(root.extra.ptr == 0);
-        }
         verifyRecurse(
             comparator,
-            self.root,
+            root,
             0,
             &black_height,
             &node_count,
@@ -926,12 +953,31 @@ test "iterator" {
     const d = map.put(TestNode.cmp, &node_c.node);
     try std.testing.expectEqual(null, d);
 
+    try std.testing.expectEqual(1, TestNode.keyOpt(map.first));
+    try std.testing.expectEqual(4, TestNode.keyOpt(map.last));
+
     // iterate in order
     var iter = map.iterator();
     try std.testing.expectEqual(1, TestNode.ofOpt(iter.next()).?.key);
     try std.testing.expectEqual(2, TestNode.ofOpt(iter.next()).?.key);
     try std.testing.expectEqual(3, TestNode.ofOpt(iter.next()).?.key);
     try std.testing.expectEqual(4, TestNode.ofOpt(iter.next()).?.key);
+    try std.testing.expectEqual(null, iter.next());
+
+    // iterate in reverse
+    iter = map.iterator();
+    try std.testing.expectEqual(4, TestNode.ofOpt(iter.nextBack()).?.key);
+    try std.testing.expectEqual(3, TestNode.ofOpt(iter.nextBack()).?.key);
+    try std.testing.expectEqual(2, TestNode.ofOpt(iter.nextBack()).?.key);
+    try std.testing.expectEqual(1, TestNode.ofOpt(iter.nextBack()).?.key);
+    try std.testing.expectEqual(null, iter.next());
+
+    // mixed iteration
+    iter = map.iterator();
+    try std.testing.expectEqual(1, TestNode.ofOpt(iter.next()).?.key);
+    try std.testing.expectEqual(4, TestNode.ofOpt(iter.nextBack()).?.key);
+    try std.testing.expectEqual(2, TestNode.ofOpt(iter.next()).?.key);
+    try std.testing.expectEqual(3, TestNode.ofOpt(iter.nextBack()).?.key);
     try std.testing.expectEqual(null, iter.next());
 }
 

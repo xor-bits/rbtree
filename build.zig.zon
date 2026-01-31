@@ -2,6 +2,6 @@
     .name = .rbtree,
     .version = "0.0.1",
     .minimum_zig_version = "0.15.2",
-    .paths = .{"*"},
+    .paths = .{"."},
     .fingerprint = 0x82a0a8848901d85a,
 }

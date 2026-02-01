@@ -549,27 +549,68 @@ pub const RedBlackTree = struct {
         return entry;
     }
 
+    /// O(log n) lookup
+    /// can be used to find the exact entry
+    /// or the smallest entry larger than `node`
+    pub fn getEntryOrLarger(
+        self: *@This(),
+        comparator: *const fn (*const Node, *const Node) std.math.Order,
+        node: *const Node,
+    ) ?*Node {
+        var cur = self.root orelse return null;
+        while (true) {
+            switch (comparator(node, cur)) {
+                .gt => cur = cur.right orelse return advance(cur, .right),
+                .lt => cur = cur.left orelse return cur,
+                .eq => break,
+            }
+        }
+        return cur;
+    }
+
+    /// O(log n) lookup
+    /// can be used to find the exact entry
+    /// or the largest entry smaller than `node`
+    pub fn getEntryOrSmaller(
+        self: *@This(),
+        comparator: *const fn (*const Node, *const Node) std.math.Order,
+        node: *const Node,
+    ) ?*Node {
+        var cur = self.root orelse return null;
+        while (true) {
+            switch (comparator(node, cur)) {
+                .gt => cur = cur.right orelse return cur,
+                .lt => cur = cur.left orelse return advance(cur, .left),
+                .eq => break,
+            }
+        }
+        return cur;
+    }
+
     /// get a pointer to the pointer that points to this node
-    fn entryOf(self: *@This(), node: Node) *?*Node {
+    fn entryOf(
+        self: *@This(),
+        node: Node,
+    ) *?*Node {
         const parent = node.parent() orelse {
             return &self.root;
         };
         return parent.childPtr(node.extra.side);
     }
 
-    fn leftmost(
+    pub fn leftmost(
         subtree: *Node,
     ) *Node {
         return repeat(subtree, .left);
     }
 
-    fn rightmost(
+    pub fn rightmost(
         subtree: *Node,
     ) *Node {
         return repeat(subtree, .right);
     }
 
-    fn repeat(
+    pub fn repeat(
         subtree: *Node,
         side: Side,
     ) *Node {
@@ -580,19 +621,19 @@ pub const RedBlackTree = struct {
         return cur;
     }
 
-    fn predecessor(
+    pub fn predecessor(
         node: *Node,
     ) ?*Node {
         return advance(node, .left);
     }
 
-    fn successor(
+    pub fn successor(
         node: *Node,
     ) ?*Node {
         return advance(node, .right);
     }
 
-    fn advance(
+    pub fn advance(
         node: *Node,
         dir: Side,
     ) ?*Node {
@@ -1068,12 +1109,16 @@ test "fuzz" {
             const TreeMap = RedBlackTree;
             const HashMap = std.AutoHashMapUnmanaged(u8, u8);
 
-            var nodes: std.heap.MemoryPool(TestNode) = .init(std.testing.allocator);
+            var gpa = std.heap.DebugAllocator(.{}){};
+            const alloc = gpa.allocator();
+            defer _ = gpa.detectLeaks();
+
+            var nodes: std.heap.MemoryPool(TestNode) = .init(alloc);
             defer nodes.deinit();
 
             var treemap: TreeMap = .{};
             var hashmap: HashMap = .{};
-            defer hashmap.deinit(std.testing.allocator);
+            defer hashmap.deinit(alloc);
 
             var ops_left: u8 = op_limit;
 
@@ -1085,7 +1130,7 @@ test "fuzz" {
                 const opcode: u8 = input[0];
                 input = input[1..];
 
-                switch (@as(u3, @truncate(opcode % 6))) {
+                switch (@as(u3, @truncate(opcode % 8))) {
                     0 => {
                         if (input.len < 1) break;
                         const key = std.mem.readInt(u8, input[0..1], .little) % key_limit;
@@ -1105,7 +1150,7 @@ test "fuzz" {
                         node.* = .{ .key = key, .value = val };
 
                         const v1 = treemap.put(TestNode.cmp, &node.node);
-                        const v2 = try hashmap.fetchPut(std.testing.allocator, key, val);
+                        const v2 = try hashmap.fetchPut(alloc, key, val);
 
                         if (v1) |old| std.debug.assert(old.extra.isolated);
 
@@ -1221,7 +1266,63 @@ test "fuzz" {
 
                         dumpContents(hashmap, treemap);
                     },
-                    else => unreachable,
+                    6 => {
+                        if (input.len < 1) break;
+                        const key = std.mem.readInt(u8, input[0..1], .little) % key_limit;
+                        input = input[1..];
+
+                        std.debug.print("getEntryOrSmaller(key={}, size={})\n", .{
+                            key,
+                            treemap.size,
+                        });
+
+                        const fetcher: TestNode = .{ .key = key };
+                        const v1 = treemap.getEntryOrSmaller(TestNode.cmp, &fetcher.node);
+                        var it = hashmap.iterator();
+                        var v2: ?u8 = null;
+                        while (it.next()) |next| {
+                            if (next.key_ptr.* > key) continue;
+                            if (v2 == null or next.key_ptr.* > v2.?)
+                                v2 = next.key_ptr.*;
+                        }
+
+                        if (v1) |old| std.debug.assert(!old.extra.isolated);
+
+                        std.debug.print("hashmap -> {any}\n", .{v2});
+                        std.debug.print("rb-tree -> {any}\n", .{TestNode.keyOpt(v1)});
+                        dumpContents(hashmap, treemap);
+
+                        try std.testing.expectEqual(v2, TestNode.keyOpt(v1));
+                    },
+                    7 => {
+                        if (input.len < 1) break;
+                        const key = std.mem.readInt(u8, input[0..1], .little) % key_limit;
+                        input = input[1..];
+
+                        std.debug.print("getEntryOrLarger(key={}, size={})\n", .{
+                            key,
+                            treemap.size,
+                        });
+
+                        const fetcher: TestNode = .{ .key = key };
+                        const v1 = treemap.getEntryOrLarger(TestNode.cmp, &fetcher.node);
+                        var it = hashmap.iterator();
+                        var v2: ?u8 = null;
+                        while (it.next()) |next| {
+                            if (next.key_ptr.* < key) continue;
+                            if (v2 == null or next.key_ptr.* < v2.?)
+                                v2 = next.key_ptr.*;
+                        }
+
+                        if (v1) |old| std.debug.assert(!old.extra.isolated);
+
+                        std.debug.print("hashmap -> {any}\n", .{v2});
+                        std.debug.print("rb-tree -> {any}\n", .{TestNode.keyOpt(v1)});
+                        dumpContents(hashmap, treemap);
+
+                        try std.testing.expectEqual(v2, TestNode.keyOpt(v1));
+                    },
+                    // else => unreachable,
                 }
 
                 {

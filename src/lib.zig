@@ -465,7 +465,9 @@ pub const RedBlackTree = struct {
                 // std.debug.print("remove rebalance case 2\n", .{});
                 sibling.extra.color = .red;
                 node = parent;
-                parent = node.parent().?;
+                parent = node.parent() orelse {
+                    return;
+                };
                 side = node.extra.side;
                 continue :loop .start;
             },

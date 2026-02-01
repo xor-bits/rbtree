@@ -51,7 +51,7 @@ pub const RedBlackTree = struct {
 
         fn setParent(self: *@This(), new: ?*Node) void {
             std.debug.assert(@as(u3, @truncate(@intFromPtr(new))) == 0);
-            self.extra.ptr = @truncate(@intFromPtr(new) >> 1);
+            self.extra.ptr = @truncate(@intFromPtr(new) >> 3);
         }
 
         fn childPtr(self: *@This(), side: Side) *?*Node {
@@ -65,8 +65,7 @@ pub const RedBlackTree = struct {
         }
 
         fn parent(self: @This()) ?*Node {
-            std.debug.assert(@as(u2, @truncate(self.extra.ptr)) == 0);
-            return @ptrFromInt(@as(u64, self.extra.ptr) << 1);
+            return @ptrFromInt(@as(u64, self.extra.ptr) << 3);
         }
 
         fn resetSide(self: *@This()) void {
@@ -1040,7 +1039,7 @@ test "fuzz" {
                 const opcode: u8 = input[0];
                 input = input[1..];
 
-                switch (@as(u3, @truncate(opcode % 5))) {
+                switch (@as(u3, @truncate(opcode % 6))) {
                     0 => {
                         if (input.len < 1) break;
                         const key = std.mem.readInt(u8, input[0..1], .little) % key_limit;
@@ -1159,6 +1158,22 @@ test "fuzz" {
                         } else {
                             try std.testing.expectEqual(0, treemap.size);
                         }
+                    },
+                    5 => {
+                        std.debug.print("clear(size={})\n", .{
+                            treemap.size,
+                        });
+
+                        var m = treemap;
+                        while (m.first) |first| {
+                            m.remove(first);
+                            nodes.destroy(@constCast(TestNode.of(first)));
+                        }
+
+                        treemap = .{};
+                        hashmap.clearRetainingCapacity();
+
+                        dumpContents(hashmap, treemap);
                     },
                     else => unreachable,
                 }

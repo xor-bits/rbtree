@@ -29,7 +29,8 @@ pub const RedBlackTree = struct {
     const ColorSideAndParent = packed struct {
         color: Color = .black,
         side: Side = .left,
-        ptr: u62 = 0,
+        isolated: bool = true,
+        ptr: u61 = 0,
     };
 
     pub const Node = struct {
@@ -153,11 +154,14 @@ pub const RedBlackTree = struct {
         entry: Entry,
         node: *Node,
     ) ?*Node {
+        std.debug.assert(node.extra.isolated);
+
         if (takeAndReplace(entry.this, node)) |old| {
             // case 0 (old entry replaced)
             // std.debug.print("insert simple case 0\n", .{});
             node.* = old.*;
             old.* = undefined;
+            old.extra.isolated = true;
             fixChildParentPointers(node);
             if (self.first == old) self.first = node;
             if (self.last == old) self.last = node;
@@ -167,6 +171,7 @@ pub const RedBlackTree = struct {
         node.left = null;
         node.right = null;
         node.extra.color = .red;
+        node.extra.isolated = false;
         node.setParent(entry.parent);
         node.resetSide();
         self.size += 1;
@@ -185,15 +190,15 @@ pub const RedBlackTree = struct {
     ) ?*Node {
         // defer self.verify(TestNode.cmp);
 
-        if (old_entry.this.* == null) {
+        var node = old_entry.this.* orelse {
             // case 0 (old entry null)
             // std.debug.print("insert simple case 0\n", .{});
             return null;
-        }
-
-        self.size -= 1;
-        var node = old_entry.this.*.?;
+        };
         var node_entry = self.entryOf(node.*);
+        self.size -= 1;
+
+        std.debug.assert(!node.extra.isolated);
 
         if (node == self.first) {
             self.first = successor(self.first.?);
@@ -273,6 +278,7 @@ pub const RedBlackTree = struct {
         }
 
         node.* = undefined;
+        node.extra.isolated = true;
         return node;
     }
 
@@ -789,6 +795,8 @@ pub const RedBlackTree = struct {
         if (_cur) |cur| {
             node_count.* += 1;
 
+            std.debug.assert(!cur.extra.isolated);
+
             if (cur.left) |left| {
                 std.debug.assert(comparator(left, cur) == .lt);
                 std.debug.assert(left.parent() == cur);
@@ -1059,6 +1067,8 @@ test "fuzz" {
                         const v1 = treemap.put(TestNode.cmp, &node.node);
                         const v2 = try hashmap.fetchPut(std.testing.allocator, key, val);
 
+                        if (v1) |old| std.debug.assert(old.extra.isolated);
+
                         std.debug.print("hashmap -> {any}\n", .{v2});
                         std.debug.print("rb-tree -> {?f}\n", .{TestNode.ofOpt(v1)});
                         dumpContents(hashmap, treemap);
@@ -1075,6 +1085,8 @@ test "fuzz" {
                         const v1 = treemap.findRemove(TestNode.cmp, &fetcher.node);
                         const v2 = hashmap.fetchRemove(key);
 
+                        if (v1) |old| std.debug.assert(old.extra.isolated);
+
                         std.debug.print("hashmap -> {any}\n", .{v2});
                         std.debug.print("rb-tree -> {?f}\n", .{TestNode.ofOpt(v1)});
                         dumpContents(hashmap, treemap);
@@ -1090,6 +1102,8 @@ test "fuzz" {
                         const fetcher: TestNode = .{ .key = key };
                         const v1 = treemap.get(TestNode.cmp, &fetcher.node);
                         const v2 = hashmap.get(key);
+
+                        if (v1) |old| std.debug.assert(!old.extra.isolated);
 
                         std.debug.print("hashmap -> {any}\n", .{v2});
                         std.debug.print("rb-tree -> {any}\n", .{TestNode.valueOpt(v1)});

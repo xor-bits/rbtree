@@ -681,50 +681,72 @@ pub const RedBlackTree = struct {
 
     pub fn debug(
         self: *const @This(),
-        print: *const fn (*const Node) void,
+        format: *const fn (*const Node, writer: *std.Io.Writer) std.Io.Writer.Error!void,
     ) void {
-        var prefix = Rope{};
-        self.debugRecurse(self.root, print, &prefix, false);
+        std.debug.print("{f}", .{self.display(format)});
     }
 
-    fn debugRecurse(
+    pub fn display(
         self: *const @This(),
-        node_: ?*const Node,
-        print: *const fn (*const Node) void,
-        prefix: *Rope,
-        is_left: bool,
-    ) void {
-        std.debug.print("\x1b[90m", .{});
-        prefix.print();
-
-        const hori =
-            if (is_left) "├────" else "└────";
-        std.debug.print("{s}", .{hori});
-
-        const node = node_ orelse {
-            std.debug.print("\x1b[30mNIL\x1b[0m\n", .{});
-            return;
-        };
-
-        std.debug.print("{s}", .{if (node.extra.color == .red) "\x1b[31m" else "\x1b[30m"});
-        print(node);
-        std.debug.print("{s}{s}\x1b[0m\n", .{
-            if (node == self.root or (node.extra.side == .left) == is_left) "" else " wrong side",
-            if (node == self.root or node.parent().?.child(node.extra.side) == node) "" else " wrong parent",
-        });
-
-        var vert =
-            prefix.push(if (is_left) "│    " else "     ");
-        self.debugRecurse(node.left, print, &vert, true);
-        self.debugRecurse(node.right, print, &vert, false);
+        formatNode: *const fn (*const Node, writer: *std.Io.Writer) std.Io.Writer.Error!void,
+    ) Display {
+        return .{ .tree = self, .formatNode = formatNode };
     }
+
+    pub const Display = struct {
+        tree: *const RedBlackTree,
+        formatNode: *const fn (*const Node, writer: *std.Io.Writer) std.Io.Writer.Error!void,
+
+        pub fn format(
+            self: @This(),
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
+            var prefix = Rope{};
+            try self.formatInner(writer, self.tree.root, &prefix, false);
+        }
+
+        fn formatInner(
+            self: @This(),
+            writer: *std.Io.Writer,
+            node_: ?*const Node,
+            prefix: *Rope,
+            is_left: bool,
+        ) std.Io.Writer.Error!void {
+            try writer.print("\x1b[90m", .{});
+            try prefix.print(writer);
+
+            const hori =
+                if (is_left) "├────" else "└────";
+            try writer.print("{s}", .{hori});
+
+            const node = node_ orelse {
+                try writer.print("\x1b[30mNIL\x1b[0m\n", .{});
+                return;
+            };
+
+            try writer.print("{s}", .{if (node.extra.color == .red) "\x1b[31m" else "\x1b[30m"});
+            try self.formatNode(node, writer);
+            try writer.print("{s}{s}\x1b[0m\n", .{
+                if (node == self.tree.root or (node.extra.side == .left) == is_left) "" else " wrong side",
+                if (node == self.tree.root or node.parent().?.child(node.extra.side) == node) "" else " wrong parent",
+            });
+
+            var vert =
+                prefix.push(if (is_left) "│    " else "     ");
+            try self.formatInner(writer, node.left, &vert, true);
+            try self.formatInner(writer, node.right, &vert, false);
+        }
+    };
 
     const Rope = struct {
         prev: ?*@This() = null,
         next: ?*@This() = null,
         this: []const u8 = "",
 
-        fn print(self: *@This()) void {
+        fn print(
+            self: *@This(),
+            writer: *std.Io.Writer,
+        ) std.Io.Writer.Error!void {
             // construct next chain
             var cur = self;
             cur.next = null;
@@ -734,19 +756,22 @@ pub const RedBlackTree = struct {
             }
             // print using the next chain
             while (cur.next) |next| {
-                std.debug.print("{s}", .{cur.this});
+                try writer.print("{s}", .{cur.this});
                 cur = next;
             }
-            std.debug.print("{s}", .{cur.this});
+            try writer.print("{s}", .{cur.this});
             // // print in reverse
             // var cur = self;
             // while (cur.prev) |next| {
-            //     std.debug.print("{s}", .{cur.this});
+            //     try writer.print("{s}", .{cur.this});
             //     cur = next;
             // }
         }
 
-        fn push(self: *@This(), part: []const u8) Rope {
+        fn push(
+            self: *@This(),
+            part: []const u8,
+        ) Rope {
             return .{
                 .prev = self,
                 .this = part,
@@ -835,34 +860,51 @@ const TestNode = struct {
     value: u8 = undefined,
     node: RedBlackTree.Node = .{},
 
-    fn keyOpt(node: ?*const RedBlackTree.Node) ?u8 {
+    fn keyOpt(
+        node: ?*const RedBlackTree.Node,
+    ) ?u8 {
         return (ofOpt(node) orelse return null).key;
     }
 
-    fn valueOpt(node: ?*const RedBlackTree.Node) ?u8 {
+    fn valueOpt(
+        node: ?*const RedBlackTree.Node,
+    ) ?u8 {
         return (ofOpt(node) orelse return null).value;
     }
 
-    fn ofOpt(node: ?*const RedBlackTree.Node) ?*const @This() {
+    fn ofOpt(
+        node: ?*const RedBlackTree.Node,
+    ) ?*const @This() {
         return @fieldParentPtr("node", node orelse return null);
     }
 
-    fn of(node: *const RedBlackTree.Node) *const @This() {
+    fn of(
+        node: *const RedBlackTree.Node,
+    ) *const @This() {
         return @fieldParentPtr("node", node);
     }
 
-    fn cmp(lhs_node: *const RedBlackTree.Node, rhs_node: *const RedBlackTree.Node) std.math.Order {
+    fn cmp(
+        lhs_node: *const RedBlackTree.Node,
+        rhs_node: *const RedBlackTree.Node,
+    ) std.math.Order {
         return std.math.order(of(lhs_node).key, of(rhs_node).key);
     }
 
-    pub fn format(self: *const @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn format(
+        self: *const @This(),
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
         return writer.print(".{{ .key = {}, .value = {} }}", .{
             self.key, self.value,
         });
     }
 
-    fn print(node: *const RedBlackTree.Node) void {
-        std.debug.print("{d}", .{of(node).key});
+    fn print(
+        node: *const RedBlackTree.Node,
+        writer: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        return writer.print("{d}", .{of(node).key});
     }
 };
 
@@ -936,6 +978,8 @@ test "get" {
     try std.testing.expectEqual(&node_a.node, found);
     found = map.get(TestNode.cmp, &node_c.node);
     try std.testing.expectEqual(null, found);
+
+    // std.debug.panic("{f}\n", .{map.display(TestNode.print)});
 }
 
 test "iterator" {

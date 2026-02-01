@@ -120,14 +120,9 @@ pub const RedBlackTree = struct {
         self: *@This(),
         node: *Node,
     ) void {
-        const parent = node.parent().?;
-        const this = if (parent.left == node)
-            &parent.left
-        else
-            &parent.right;
         const old = self.removeEntry(.{
-            .parent = parent,
-            .this = this,
+            .parent = node.parent(),
+            .this = self.entryOf(node.*),
         });
         std.debug.assert(old == node);
     }
@@ -1045,12 +1040,12 @@ test "fuzz" {
                 const opcode: u8 = input[0];
                 input = input[1..];
 
-                if (input.len < 1) break;
-                const key = std.mem.readInt(u8, input[0..1], .little) % key_limit;
-                input = input[1..];
-
-                switch (@as(u2, @truncate(opcode % 3))) {
+                switch (@as(u3, @truncate(opcode % 5))) {
                     0 => {
+                        if (input.len < 1) break;
+                        const key = std.mem.readInt(u8, input[0..1], .little) % key_limit;
+                        input = input[1..];
+
                         if (input.len < 1) break;
                         const val = std.mem.readInt(u8, input[0..1], .little);
                         input = input[1..];
@@ -1076,6 +1071,10 @@ test "fuzz" {
                         try expectKvEq(v2, TestNode.ofOpt(v1));
                     },
                     1 => {
+                        if (input.len < 1) break;
+                        const key = std.mem.readInt(u8, input[0..1], .little) % key_limit;
+                        input = input[1..];
+
                         std.debug.print("fetchRemove(key={}, size={})\n", .{
                             key,
                             treemap.size,
@@ -1094,6 +1093,10 @@ test "fuzz" {
                         try expectKvEq(v2, TestNode.ofOpt(v1));
                     },
                     2 => {
+                        if (input.len < 1) break;
+                        const key = std.mem.readInt(u8, input[0..1], .little) % key_limit;
+                        input = input[1..];
+
                         std.debug.print("get(key={}, size={})\n", .{
                             key,
                             treemap.size,
@@ -1111,7 +1114,53 @@ test "fuzz" {
 
                         try std.testing.expectEqual(v2, TestNode.valueOpt(v1));
                     },
-                    3 => {},
+                    3 => {
+                        if (treemap.first) |first| {
+                            const v1 = TestNode.of(first);
+
+                            std.debug.print("popFirst(key={}, size={})\n", .{
+                                v1.key,
+                                treemap.size,
+                            });
+
+                            treemap.remove(first);
+                            const v2 = hashmap.fetchRemove(v1.key);
+
+                            std.debug.assert(first.extra.isolated);
+
+                            std.debug.print("hashmap -> {any}\n", .{v2});
+                            std.debug.print("rb-tree -> {f}\n", .{v1});
+                            dumpContents(hashmap, treemap);
+
+                            try expectKvEq(v2, @as(?*const TestNode, v1));
+                        } else {
+                            try std.testing.expectEqual(0, treemap.size);
+                        }
+                    },
+                    4 => {
+                        if (treemap.last) |last| {
+                            const v1 = TestNode.of(last);
+
+                            std.debug.print("popLast(key={}, size={})\n", .{
+                                v1.key,
+                                treemap.size,
+                            });
+
+                            treemap.remove(last);
+                            const v2 = hashmap.fetchRemove(v1.key);
+
+                            std.debug.assert(last.extra.isolated);
+
+                            std.debug.print("hashmap -> {any}\n", .{v2});
+                            std.debug.print("rb-tree -> {f}\n", .{v1});
+                            dumpContents(hashmap, treemap);
+
+                            try expectKvEq(v2, @as(?*const TestNode, v1));
+                        } else {
+                            try std.testing.expectEqual(0, treemap.size);
+                        }
+                    },
+                    else => unreachable,
                 }
 
                 {
